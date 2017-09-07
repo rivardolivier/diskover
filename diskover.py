@@ -367,6 +367,43 @@ def crawlFiles(path, DATEEPOCH, DAYSOLD, MINSIZE, EXCLUDED_FILES, LOGGER, thread
 		pass
 	return
 
+def getDirectoryInfo(path, DATEEPOCH, DAYSOLD, MINSIZE, EXCLUDED_FILES, LOGGER, threadnum, VERBOSE, DEBUG):
+
+	try:
+		directoryList = []
+		# get absolute path (parent of directory)
+		abspath = os.path.abspath(os.path.join(path, os.pardir)).decode('utf-8')
+		# get full path to directory
+		directory_fullpath = os.path.abspath(path).decode('utf-8')
+
+		name = os.path.basename(path).decode('utf-8')
+
+		directorymeta_dict = {
+							"directoryName": "%s" % name,
+							"path": "%s" % directory_fullpath,
+							"path_parent": "%s" % abspath
+							}
+		directoryList.append(directorymeta_dict)
+		return directoryList
+
+	except:
+		if DEBUG or VERBOSE:
+			LOGGER.error('Failed to index directory', exc_info=True)
+		pass
+	
+
+
+
+
+
+	"""This is the list directory function.
+	It crawls for files using scandir.
+	Ignores files smaller than 'MINSIZE' MB, newer
+	than 'DAYSOLD' old and in 'EXCLUDED_FILES'.
+	Tries to reduce the amount of stat calls to the fs
+	to help speed up crawl times.
+	"""
+
 def workerSetup(DIRECTORY_QUEUE, NUM_THREADS, ES, INDEXNAME, DATEEPOCH, \
 		DAYSOLD, MINSIZE, EXCLUDED_FILES, LOGGER, QUIET, VERBOSE, DEBUG):
 	"""This is the worker setup function.
@@ -401,9 +438,15 @@ def processDirectoryWorker(threadnum, DIRECTORY_QUEUE, ES, INDEXNAME, DATEEPOCH,
 		# crawl the files in the directory
 		filelist = crawlFiles(path, DATEEPOCH, DAYSOLD, MINSIZE, EXCLUDED_FILES, \
 			LOGGER, threadnum, VERBOSE, DEBUG)
+
+		directory = getDirectoryInfo(path, DATEEPOCH, DAYSOLD, MINSIZE, EXCLUDED_FILES, \
+			LOGGER, threadnum, VERBOSE, DEBUG)
 		if filelist:
 			# add filelist to ES index
-			indexAdd(threadnum, ES, INDEXNAME, filelist, LOGGER, VERBOSE, DEBUG)
+			indexAdd(threadnum, ES, INDEXNAME, filelist, 'file', LOGGER, VERBOSE, DEBUG)
+		if directory:
+			# add directory to ES index
+			indexAdd(threadnum, ES, INDEXNAME, directory, 'directory', LOGGER, VERBOSE, DEBUG)
 		# print progress bar
 		dircount = total_num_dirs - DIRECTORY_QUEUE.qsize()
 		if dircount > 0 and not VERBOSE and not DEBUG and not QUIET:
@@ -506,6 +549,19 @@ def indexCreate(ES, INDEXNAME, NODELETE, LOGGER):
 						"type": "integer"
 					}
 				}
+			},
+			"directory": {
+				"properties": {
+					"directoryName": {
+						"type": "keyword"
+					},
+					"path_parent": {
+						"type": "keyword"
+					},
+					"path": {
+						"type": "keyword"
+					}
+				}
 			}
 		}
 	}
@@ -513,7 +569,7 @@ def indexCreate(ES, INDEXNAME, NODELETE, LOGGER):
 	ES.indices.create(index=INDEXNAME, body=mappings)
 	return
 
-def indexAdd(threadnum, ES, INDEXNAME, filelist, LOGGER, VERBOSE, DEBUG):
+def indexAdd(threadnum, ES, INDEXNAME, filelist, type, LOGGER, VERBOSE, DEBUG):
 	"""This is the ES index add function.
 	It bulk adds data from worker's crawl
 	results into ES.
@@ -521,7 +577,7 @@ def indexAdd(threadnum, ES, INDEXNAME, filelist, LOGGER, VERBOSE, DEBUG):
 	if VERBOSE or DEBUG:
 		LOGGER.info('[thread-%s]: Bulk adding to ES index', threadnum)
 	# bulk load data to Elasticsearch index
-	helpers.bulk(ES, filelist, index=INDEXNAME, doc_type='file')
+	helpers.bulk(ES, filelist, index=INDEXNAME, doc_type=type)
 	return
 
 def indexUpdate(ES, INDEXNAME, filelist, LOGGER, VERBOSE, DEBUG):
